@@ -1,0 +1,205 @@
+import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut as firebaseSignOut, 
+  onAuthStateChanged,
+  type Auth, 
+  type User 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  setDoc, 
+  getDocs,
+  type Firestore 
+} from 'firebase/firestore';
+import type { HugoUser, DecrypteSession } from '../types/ddd';
+
+export interface FirebaseConfigParams {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  appId: string;
+}
+
+const LOCAL_STORAGE_FIREBASE_KEY = 'ddd_firebase_custom_config';
+
+export function getSavedFirebaseConfig(): FirebaseConfigParams | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_FIREBASE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.error('Error reading saved firebase config', e);
+  }
+
+  if (import.meta.env.VITE_FIREBASE_API_KEY && import.meta.env.VITE_FIREBASE_PROJECT_ID) {
+    return {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+    };
+  }
+
+  return null;
+}
+
+export function saveFirebaseConfig(config: FirebaseConfigParams) {
+  localStorage.setItem(LOCAL_STORAGE_FIREBASE_KEY, JSON.stringify(config));
+  window.location.reload();
+}
+
+export function clearFirebaseConfig() {
+  localStorage.removeItem(LOCAL_STORAGE_FIREBASE_KEY);
+  window.location.reload();
+}
+
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
+
+const initialConfig = getSavedFirebaseConfig();
+if (initialConfig && initialConfig.apiKey && initialConfig.projectId) {
+  try {
+    app = getApps().length === 0 ? initializeApp(initialConfig) : getApps()[0];
+    auth = getAuth(app);
+    db = getFirestore(app);
+  } catch (err) {
+    console.warn('Firebase initialization failed with provided config:', err);
+  }
+}
+
+export const isFirebaseConfigured = Boolean(app && auth && db);
+
+// Google Sign-In
+export async function loginWithGoogle(): Promise<HugoUser> {
+  if (isFirebaseConfigured && auth) {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const result = await signInWithPopup(auth, provider);
+    const u: User = result.user;
+    
+    const hugoUser: HugoUser = {
+      uid: u.uid,
+      displayName: u.displayName || 'Utilisateur Google',
+      email: u.email || '',
+      photoURL: u.photoURL || `https://api.dicebear.com/7.x/bottts/svg?seed=${u.uid}`,
+      rankTitle: 'Participant',
+      joinedAt: new Date().toISOString(),
+    };
+
+    if (db) {
+      try {
+        await setDoc(doc(db, 'users', u.uid), hugoUser, { merge: true });
+      } catch (err) {
+        console.warn('Failed to sync user to firestore:', err);
+      }
+    }
+
+    return hugoUser;
+  }
+
+  // Fallback Google Sign-In prompt when Firebase project is not linked yet
+  const userPrompt = window.prompt(
+    "Connexion Google (Mode Local) :\nEntrez votre nom ou pseudo Google pour synchroniser votre session :"
+  );
+  if (!userPrompt || !userPrompt.trim()) {
+    throw new Error("Connexion annulée");
+  }
+
+  const cleanName = userPrompt.trim();
+  const seed = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const demoUser: HugoUser = {
+    uid: `google_user_${seed || 'me'}`,
+    displayName: cleanName,
+    email: `${seed || 'user'}@gmail.com`,
+    photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}`,
+    rankTitle: 'Participant',
+    joinedAt: new Date().toISOString(),
+  };
+
+  localStorage.setItem('ddd_logged_user', JSON.stringify(demoUser));
+  return demoUser;
+}
+
+export async function logoutUser(): Promise<void> {
+  if (isFirebaseConfigured && auth) {
+    await firebaseSignOut(auth);
+  }
+  localStorage.removeItem('ddd_logged_user');
+}
+
+export function subscribeToAuthState(callback: (user: HugoUser | null) => void) {
+  if (isFirebaseConfigured && auth) {
+    return onAuthStateChanged(auth, (u) => {
+      if (u) {
+        callback({
+          uid: u.uid,
+          displayName: u.displayName || 'Utilisateur Google',
+          email: u.email || '',
+          photoURL: u.photoURL || `https://api.dicebear.com/7.x/bottts/svg?seed=${u.uid}`,
+          rankTitle: 'Participant',
+          joinedAt: new Date().toISOString(),
+        });
+      } else {
+        callback(null);
+      }
+    });
+  }
+
+  const saved = localStorage.getItem('ddd_logged_user');
+  if (saved) {
+    try {
+      callback(JSON.parse(saved));
+    } catch {
+      callback(null);
+    }
+  } else {
+    callback(null);
+  }
+
+  return () => {};
+}
+
+// Sync session to cloud
+export async function syncSessionToCloud(session: DecrypteSession): Promise<void> {
+  if (!isFirebaseConfigured || !db) return;
+  try {
+    await setDoc(doc(db, 'sessions', session.id), session);
+  } catch (e) {
+    console.error('Could not sync session to Firestore:', e);
+  }
+}
+
+// Fetch all real cloud users
+export async function getCloudUsers(): Promise<HugoUser[]> {
+  if (!isFirebaseConfigured || !db) return [];
+  try {
+    const snap = await getDocs(collection(db, 'users'));
+    const users: HugoUser[] = [];
+    snap.forEach((d) => users.push(d.data() as HugoUser));
+    return users;
+  } catch {
+    return [];
+  }
+}
+
+// Fetch all real cloud sessions
+export async function getCloudSessions(): Promise<DecrypteSession[]> {
+  if (!isFirebaseConfigured || !db) return [];
+  try {
+    const snap = await getDocs(collection(db, 'sessions'));
+    const sessions: DecrypteSession[] = [];
+    snap.forEach((d) => sessions.push(d.data() as DecrypteSession));
+    return sessions;
+  } catch {
+    return [];
+  }
+}
