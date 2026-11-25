@@ -27,9 +27,19 @@ export interface FirebaseConfigParams {
   appId: string;
 }
 
+// Configuration Firebase intégrée par défaut
+export const DEFAULT_FIREBASE_CONFIG: FirebaseConfigParams = {
+  apiKey: "AIzaSyDFpYsWjv5V3oCDJD2KmW8X9N-sKDVpohg",
+  authDomain: "ddd-hugo-decrypte-01.firebaseapp.com",
+  projectId: "ddd-hugo-decrypte-01",
+  storageBucket: "ddd-hugo-decrypte-01.firebasestorage.app",
+  messagingSenderId: "573319104311",
+  appId: "1:573319104311:web:f8ad8737116e1de6dcbcb2",
+};
+
 const LOCAL_STORAGE_FIREBASE_KEY = 'ddd_firebase_custom_config';
 
-export function getSavedFirebaseConfig(): FirebaseConfigParams | null {
+export function getSavedFirebaseConfig(): FirebaseConfigParams {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_FIREBASE_KEY);
     if (raw) return JSON.parse(raw);
@@ -48,7 +58,7 @@ export function getSavedFirebaseConfig(): FirebaseConfigParams | null {
     };
   }
 
-  return null;
+  return DEFAULT_FIREBASE_CONFIG;
 }
 
 export function saveFirebaseConfig(config: FirebaseConfigParams) {
@@ -66,14 +76,12 @@ let auth: Auth | null = null;
 let db: Firestore | null = null;
 
 const initialConfig = getSavedFirebaseConfig();
-if (initialConfig && initialConfig.apiKey && initialConfig.projectId) {
-  try {
-    app = getApps().length === 0 ? initializeApp(initialConfig) : getApps()[0];
-    auth = getAuth(app);
-    db = getFirestore(app);
-  } catch (err) {
-    console.warn('Firebase initialization failed with provided config:', err);
-  }
+try {
+  app = getApps().length === 0 ? initializeApp(initialConfig) : getApps()[0];
+  auth = getAuth(app);
+  db = getFirestore(app);
+} catch (err) {
+  console.warn('Firebase initialization failed with config:', err);
 }
 
 export const isFirebaseConfigured = Boolean(app && auth && db);
@@ -113,7 +121,6 @@ export async function logoutUser(): Promise<void> {
   if (isFirebaseConfigured && auth) {
     await firebaseSignOut(auth);
   }
-  localStorage.removeItem('ddd_logged_user');
 }
 
 export function subscribeToAuthState(callback: (user: HugoUser | null) => void) {
