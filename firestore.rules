@@ -1,0 +1,207 @@
+rules_version = '2';
+
+// ===============================================================
+// Cloud Firestore Security Rules - ddd-hugo-decrypte
+// ===============================================================
+//
+// Assumed Data Models:
+//
+// 1. Collection: users/{userId}
+//    Document ID: {userId} (matches Firebase Auth UID)
+//    Description: User profile displayed on the community leaderboard.
+//    Fields:
+//      - uid: string (required, 1-128 chars, matches document ID and request.auth.uid, immutable)
+//      - displayName: string (required, 1-100 chars)
+//      - email: string (required, 0-150 chars, empty string or valid email)
+//      - photoURL: string (required, 1-500 chars, valid HTTP/HTTPS URL)
+//      - rankTitle: string (required, 1-50 chars)
+//      - joinedAt: string (required, 1-50 chars, ISO 8601 date string)
+//
+// 2. Collection: sessions/{sessionId}
+//    Document ID: {sessionId} (unique session identifier e.g., session_<timestamp>_<random>)
+//    Description: Hugo Décrypte challenge log entries recorded by users.
+//    Fields:
+//      - id: string (required, 5-100 chars, matches document ID, immutable)
+//      - userId: string (required, 1-128 chars, matches request.auth.uid, immutable)
+//      - userName: string (required, 1-100 chars)
+//      - userPhoto: string (optional, 1-500 chars, valid HTTP/HTTPS URL)
+//      - dayNumber: int (required, 1-31)
+//      - dateString: string (required, YYYY-MM-DD format)
+//      - timestamp: string (required, 4-35 chars, HH:mm or ISO format)
+//      - contentType: string (required, allowed values: 'actus-du-jour', 'format-long',
+//                      'interview', 'short-flash', 'podcast-elucid', 'mashup', 'autre')
+//      - videoTitle: string (optional, 0-200 chars)
+//      - comment: string (optional, 0-500 chars)
+//      - mentalSaturation: int (required, 1-5)
+//      - createdAt: number (required, epoch milliseconds timestamp > 0, immutable)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the authenticated user is the document owner by path parameter
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Validate HTTP/HTTPS URL format
+    function isValidUrl(url) {
+      return url is string &&
+        (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // Validate email format
+    function isValidEmail(email) {
+      return email is string &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Validate ISO 8601 date format string (YYYY-MM-DDTHH:MM:SS)
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // Validate calendar day date string format (YYYY-MM-DD)
+    function isValidDayDate(dateStr) {
+      return dateStr is string &&
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}$");
+    }
+
+    // ===============================================================
+    // Domain Validators: Users Collection
+    // ===============================================================
+
+    // Enforce strict schema and data constraints for User profile
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'photoURL', 'rankTitle', 'joinedAt']) &&
+             data.keys().hasOnly(['uid', 'displayName', 'email', 'photoURL', 'rankTitle', 'joinedAt']) &&
+             data.uid is string &&
+             data.uid == request.auth.uid &&
+             data.uid.size() > 0 &&
+             data.uid.size() <= 128 &&
+             data.displayName is string &&
+             data.displayName.size() >= 1 &&
+             data.displayName.size() <= 100 &&
+             data.email is string &&
+             data.email.size() <= 150 &&
+             (data.email == '' || isValidEmail(data.email)) &&
+             data.photoURL is string &&
+             data.photoURL.size() <= 500 &&
+             isValidUrl(data.photoURL) &&
+             data.rankTitle is string &&
+             data.rankTitle.size() >= 1 &&
+             data.rankTitle.size() <= 50 &&
+             data.joinedAt is string &&
+             data.joinedAt.size() <= 50 &&
+             isValidDateString(data.joinedAt);
+    }
+
+    // Prevent tampering with immutable user fields on update
+    function areImmutableUserFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid']);
+    }
+
+    // ===============================================================
+    // Domain Validators: Sessions Collection
+    // ===============================================================
+
+    // Enforce strict schema, type safety, and DoS limits for Challenge Sessions
+    function isValidSession(data) {
+      return data.keys().hasAll(['id', 'userId', 'userName', 'dayNumber', 'dateString', 'timestamp', 'contentType', 'mentalSaturation', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'userId', 'userName', 'userPhoto', 'dayNumber', 'dateString', 'timestamp', 'contentType', 'videoTitle', 'comment', 'mentalSaturation', 'createdAt']) &&
+             data.id is string &&
+             data.id.size() >= 5 &&
+             data.id.size() <= 100 &&
+             data.userId is string &&
+             data.userId == request.auth.uid &&
+             data.userId.size() <= 128 &&
+             data.userName is string &&
+             data.userName.size() >= 1 &&
+             data.userName.size() <= 100 &&
+             (!('userPhoto' in data) || (data.userPhoto is string && data.userPhoto.size() <= 500 && isValidUrl(data.userPhoto))) &&
+             data.dayNumber is int &&
+             data.dayNumber >= 1 &&
+             data.dayNumber <= 31 &&
+             data.dateString is string &&
+             isValidDayDate(data.dateString) &&
+             data.timestamp is string &&
+             data.timestamp.size() >= 4 &&
+             data.timestamp.size() <= 35 &&
+             data.contentType is string &&
+             data.contentType in ['actus-du-jour', 'format-long', 'interview', 'short-flash', 'podcast-elucid', 'mashup', 'autre'] &&
+             (!('videoTitle' in data) || (data.videoTitle is string && data.videoTitle.size() <= 200)) &&
+             (!('comment' in data) || (data.comment is string && data.comment.size() <= 500)) &&
+             data.mentalSaturation is int &&
+             data.mentalSaturation >= 1 &&
+             data.mentalSaturation <= 5 &&
+             data.createdAt is number &&
+             data.createdAt > 0;
+    }
+
+    // Ensure core identity and creation timestamp are immutable on update
+    function areImmutableSessionFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['id', 'userId', 'createdAt']);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // Default deny for all documents
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      // Authenticated users can read user profiles to populate the community leaderboard
+      allow read: if isAuthenticated();
+
+      // Users can only create their own user document matching their auth UID
+      allow create: if isOwner(userId) &&
+                       isValidUser(request.resource.data);
+
+      // Users can only update their own user document without altering immutable fields
+      allow update: if isOwner(userId) &&
+                       isValidUser(request.resource.data) &&
+                       areImmutableUserFieldsUnchanged();
+
+      // Client deletion of user documents is prohibited
+      allow delete: if false;
+    }
+
+    // Sessions Collection
+    match /sessions/{sessionId} {
+      // Authenticated users can read challenge log entries to compute community statistics
+      allow read: if isAuthenticated();
+
+      // Users can only create their own challenge session matching their auth UID and sessionId
+      allow create: if isAuthenticated() &&
+                       request.auth.uid == request.resource.data.userId &&
+                       request.resource.data.id == sessionId &&
+                       isValidSession(request.resource.data);
+
+      // Users can only update their own sessions without altering immutable identity or creation fields
+      allow update: if isAuthenticated() &&
+                       resource.data.userId == request.auth.uid &&
+                       request.resource.data.userId == request.auth.uid &&
+                       isValidSession(request.resource.data) &&
+                       areImmutableSessionFieldsUnchanged();
+
+      // Users can only delete their own sessions
+      allow delete: if isAuthenticated() &&
+                       resource.data.userId == request.auth.uid;
+    }
+  }
+}
