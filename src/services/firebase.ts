@@ -106,27 +106,7 @@ export async function loginWithGoogle(): Promise<HugoUser> {
     return hugoUser;
   }
 
-  // Fallback Google Sign-In prompt when Firebase project is not linked yet
-  const userPrompt = window.prompt(
-    "Connexion Google (Mode Local) :\nEntrez votre nom ou pseudo Google pour synchroniser votre session :"
-  );
-  if (!userPrompt || !userPrompt.trim()) {
-    throw new Error("Connexion annulée");
-  }
-
-  const cleanName = userPrompt.trim();
-  const seed = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const demoUser: HugoUser = {
-    uid: `google_user_${seed || 'me'}`,
-    displayName: cleanName,
-    email: `${seed || 'user'}@gmail.com`,
-    photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}`,
-    rankTitle: 'Participant',
-    joinedAt: new Date().toISOString(),
-  };
-
-  localStorage.setItem('ddd_logged_user', JSON.stringify(demoUser));
-  return demoUser;
+  throw new Error("FIREBASE_NOT_CONFIGURED");
 }
 
 export async function logoutUser(): Promise<void> {
@@ -154,17 +134,7 @@ export function subscribeToAuthState(callback: (user: HugoUser | null) => void) 
     });
   }
 
-  const saved = localStorage.getItem('ddd_logged_user');
-  if (saved) {
-    try {
-      callback(JSON.parse(saved));
-    } catch {
-      callback(null);
-    }
-  } else {
-    callback(null);
-  }
-
+  callback(null);
   return () => {};
 }
 
