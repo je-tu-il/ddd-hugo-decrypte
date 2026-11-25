@@ -16,5 +16,19 @@
         "destination": "/index.html"
       }
     ]
+  },
+  "auth": {
+    "providers": {
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "DDD Hugo Decrypte",
+        "supportEmail": "jules.reymond0509@gmail.com"
+      }
+    },
+    "authorizedDomains": [
+      "localhost",
+      "ddd-hugo-decrypte-01.firebaseapp.com",
+      "ddd-hugo-decrypte-01.web.app",
+      "ddd-hugo-decrypte.vercel.app"
+    ]
   }
 }
